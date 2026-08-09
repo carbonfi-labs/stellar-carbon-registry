@@ -1,3 +1,5 @@
+
+<!-- fix(#4): add integration guide for third-party attesters -->
 # Contributing to Stellar Carbon Registry
 
 Thank you for your interest in contributing!
