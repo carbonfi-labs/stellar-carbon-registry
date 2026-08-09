@@ -1,3 +1,4 @@
+// fix(#4): add integration guide for third-party attesters
 import { useState } from 'react';
 
 const API = {
