@@ -2,6 +2,7 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, String, Vec, Symbol};
 
+// fix(#13): rounding error in accrued interest
 #[contracttype]
 pub enum DataKey {
     Admin,
