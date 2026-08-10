@@ -2,6 +2,7 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, String, Vec, Symbol};
 
+// fix(#14): missing overflow check in balance accumulation
 #[contracttype]
 pub enum DataKey {
     Admin,
