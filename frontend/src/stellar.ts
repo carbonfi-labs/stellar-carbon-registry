@@ -4,15 +4,15 @@ import {
   Horizon,
   TransactionBuilder,
   Transaction,
-  Networks,
   Operation,
   Asset,
 } from "stellar-sdk";
 
-// 1. Stellar Testnet configuration
-export const HORIZON_URL = "https://horizon-testnet.stellar.org";
-export const NETWORK_PASSPHRASE = Networks.TESTNET;
-export const NETWORK_NAME = "TESTNET";
+// Network configuration now lives in config.ts so the app can target
+// testnet or mainnet from a single build. Re-exported here for backwards
+// compatibility with existing imports.
+export { HORIZON_URL, NETWORK_PASSPHRASE, NETWORK_NAME } from "./config";
+import { HORIZON_URL, NETWORK_PASSPHRASE } from "./config";
 
 const server = new Horizon.Server(HORIZON_URL);
 

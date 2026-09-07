@@ -1,4 +1,7 @@
-/target
-/node_modules
+target/
+node_modules/
 .env
+.env.*
+!.env.example
 *.wasm
+test_snapshots/
