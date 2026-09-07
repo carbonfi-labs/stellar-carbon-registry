@@ -4,34 +4,44 @@ import {
   disconnectWallet,
   getActiveAddress,
   getFreighterNetwork,
-  signWithFreighter,
 } from "./wallet";
+import { getXlmBalance, NETWORK_NAME } from "./stellar";
+import { REGISTRY_CONTRACT_ID } from "./config";
 import {
-  getXlmBalance,
-  buildPaymentXdr,
-  submitSignedTx,
-  fundWithFriendbot,
-  NETWORK_NAME,
-  NETWORK_PASSPHRASE,
-  HORIZON_URL,
-} from "./stellar";
+  getProject,
+  balanceOf,
+  buyCredits,
+  retireCredits,
+  getRetirement,
+  type Project,
+  type Retirement,
+} from "./registry";
 
 type Feedback =
   | { kind: "idle" }
   | { kind: "pending"; msg: string }
-  | { kind: "success"; hash: string }
+  | { kind: "success"; msg: string; hash?: string }
   | { kind: "error"; msg: string };
 
 export default function App() {
   const [address, setAddress] = useState<string | null>(null);
   const [network, setNetwork] = useState<string | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
-  const [destination, setDestination] = useState("");
-  const [amount, setAmount] = useState("1");
   const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" });
-  const [loadingBalance, setLoadingBalance] = useState(false);
 
-  // Reconnect on load if Freighter already knows this app
+  // Registry state
+  const [projectId, setProjectId] = useState("1");
+  const [project, setProject] = useState<Project | null>(null);
+  const [creditBalance, setCreditBalance] = useState<bigint | null>(null);
+
+  const [listingId, setListingId] = useState("1");
+  const [buyAmount, setBuyAmount] = useState("1");
+
+  const [retireAmount, setRetireAmount] = useState("1");
+  const [retireReason, setRetireReason] = useState("Voluntary offset");
+  const [lastCertId, setLastCertId] = useState<string>("");
+  const [cert, setCert] = useState<Retirement | null>(null);
+
   useEffect(() => {
     (async () => {
       const a = await getActiveAddress();
@@ -44,24 +54,17 @@ export default function App() {
   }, []);
 
   const refreshBalance = async (pub: string) => {
-    setLoadingBalance(true);
     try {
       setBalance(await getXlmBalance(pub));
-    } catch (e: any) {
+    } catch {
       setBalance(null);
-      setFeedback({ kind: "error", msg: `Balance fetch failed: ${e.message ?? e}` });
-    } finally {
-      setLoadingBalance(false);
     }
   };
 
   const onConnect = async () => {
     setFeedback({ kind: "pending", msg: "Requesting Freighter access…" });
     const res = await connectWallet();
-    if (res.error) {
-      setFeedback({ kind: "error", msg: res.error });
-      return;
-    }
+    if (res.error) return setFeedback({ kind: "error", msg: res.error });
     setAddress(res.address!);
     const net = await getFreighterNetwork();
     setNetwork(net?.network ?? null);
@@ -74,56 +77,75 @@ export default function App() {
     setAddress(null);
     setNetwork(null);
     setBalance(null);
+    setProject(null);
+    setCreditBalance(null);
     setFeedback({ kind: "idle" });
   };
 
-  const onFund = async () => {
-    if (!address) return;
-    setFeedback({ kind: "pending", msg: "Funding with Friendbot…" });
+  const onLoadProject = async () => {
+    setFeedback({ kind: "pending", msg: `Loading project #${projectId}…` });
     try {
-      await fundWithFriendbot(address);
-      await refreshBalance(address);
-      setFeedback({ kind: "success", hash: "funded" });
+      const p = await getProject(Number(projectId));
+      setProject(p);
+      if (address) setCreditBalance(await balanceOf(address, Number(projectId)));
+      setFeedback({ kind: "idle" });
     } catch (e: any) {
-      setFeedback({ kind: "error", msg: `Friendbot failed: ${e.message ?? e}` });
+      setProject(null);
+      setFeedback({ kind: "error", msg: e.message ?? String(e) });
     }
   };
 
-  const onSend = async () => {
+  const onBuy = async () => {
     if (!address) return;
-    if (!destination) {
-      setFeedback({ kind: "error", msg: "Enter a destination public key." });
-      return;
-    }
-    if (!amount || Number(amount) <= 0) {
-      setFeedback({ kind: "error", msg: "Enter a valid XLM amount." });
-      return;
-    }
-    setFeedback({ kind: "pending", msg: "Building & signing transaction…" });
+    setFeedback({ kind: "pending", msg: "Signing & submitting purchase…" });
     try {
-      const xdr = await buildPaymentXdr(address, destination.trim(), amount);
-      const signed = await signWithFreighter(xdr, NETWORK_PASSPHRASE);
-      if (signed.error) throw new Error(signed.error);
-      setFeedback({ kind: "pending", msg: "Submitting to testnet…" });
-      const res = await submitSignedTx(signed.signedTxXdr!);
-      setFeedback({ kind: "success", hash: res.hash });
-      await refreshBalance(address);
+      const hash = await buyCredits(address, Number(listingId), Number(buyAmount));
+      setFeedback({ kind: "success", msg: "Credits purchased", hash });
+      await onLoadProject();
     } catch (e: any) {
-      const msg = typeof e === "string" ? e : e?.message ?? JSON.stringify(e);
-      setFeedback({ kind: "error", msg: `Transaction failed: ${msg}` });
+      setFeedback({ kind: "error", msg: e.message ?? String(e) });
     }
   };
+
+  const onRetire = async () => {
+    if (!address) return;
+    setFeedback({ kind: "pending", msg: "Signing & submitting retirement…" });
+    try {
+      const hash = await retireCredits(
+        address,
+        Number(projectId),
+        Number(retireAmount),
+        retireReason
+      );
+      setFeedback({ kind: "success", msg: "Credits retired — certificate issued", hash });
+      await onLoadProject();
+    } catch (e: any) {
+      setFeedback({ kind: "error", msg: e.message ?? String(e) });
+    }
+  };
+
+  const onLoadCert = async () => {
+    if (!lastCertId) return;
+    try {
+      setCert(await getRetirement(Number(lastCertId)));
+    } catch (e: any) {
+      setCert(null);
+      setFeedback({ kind: "error", msg: e.message ?? String(e) });
+    }
+  };
+
+  const onTestnet = network === NETWORK_NAME;
 
   return (
     <div className="app">
       <header>
-        <h1>Stellar Level 1 — Freighter Wallet</h1>
+        <h1>🌍 Stellar Carbon Registry</h1>
         <p className="muted">
-          Network: <strong>{network ?? "—"}</strong> · Required: {NETWORK_NAME}
+          Tokenize, trade, and retire carbon credits on Soroban · Network:{" "}
+          <strong>{network ?? "—"}</strong> (required: {NETWORK_NAME})
         </p>
       </header>
 
-      {/* 2. Wallet Connection */}
       <section className="card">
         <h2>Wallet</h2>
         {!address ? (
@@ -131,71 +153,118 @@ export default function App() {
         ) : (
           <div>
             <div className="row"><span>Address:</span><code>{address}</code></div>
-            <div className="row">
-              <span>Network:</span>
-              <span className={network === NETWORK_NAME ? "ok" : "warn"}>
-                {network ?? "unknown"}{network !== NETWORK_NAME ? " (switch Freighter to Testnet!)" : ""}
-              </span>
-            </div>
-            <div className="actions">
-              <button onClick={onDisconnect}>Disconnect</button>
-            </div>
+            <div className="row"><span>XLM:</span><strong>{balance ?? "—"}</strong></div>
+            {!onTestnet && (
+              <p className="warn">Switch Freighter to {NETWORK_NAME}.</p>
+            )}
+            <div className="actions"><button onClick={onDisconnect}>Disconnect</button></div>
           </div>
         )}
       </section>
 
-      {/* 3. Balance Handling */}
+      {!REGISTRY_CONTRACT_ID && (
+        <section className="card">
+          <p className="warn">
+            No registry contract configured. Set <code>VITE_REGISTRY_CONTRACT_ID</code> in{" "}
+            <code>frontend/.env</code> (see <code>.env.example</code>) to enable the panels below.
+          </p>
+        </section>
+      )}
+
+      {/* Browse a project */}
       <section className="card">
-        <h2>Balance</h2>
-        {address ? (
-          <div>
-            <div className="row big"><span>XLM:</span><strong>{loadingBalance ? "loading…" : balance ?? "—"}</strong></div>
-            <div className="actions">
-              <button onClick={() => refreshBalance(address)}>Refresh balance</button>
-              <button onClick={onFund}>Fund with Friendbot</button>
-            </div>
+        <h2>Project explorer</h2>
+        <div className="form">
+          <label>Project ID
+            <input value={projectId} onChange={(e) => setProjectId(e.target.value)} type="number" min="1" />
+          </label>
+          <button className="primary" onClick={onLoadProject}>Load project</button>
+        </div>
+        {project && (
+          <div style={{ marginTop: 12 }}>
+            <div className="row"><span>Name:</span><strong>{project.name}</strong></div>
+            <div className="row"><span>Region:</span><span>{project.region}</span></div>
+            <div className="row"><span>Type:</span><span>{project.project_type}</span></div>
+            <div className="row"><span>Vintage:</span><span>{project.vintage}</span></div>
+            <div className="row"><span>Issued:</span><span>{project.total_issued.toString()}</span></div>
+            <div className="row"><span>Available:</span><span>{project.available.toString()}</span></div>
+            <div className="row"><span>Retired:</span><span>{project.retired.toString()}</span></div>
+            {creditBalance !== null && (
+              <div className="row big"><span>Your credits:</span><strong>{creditBalance.toString()}</strong></div>
+            )}
           </div>
-        ) : <p className="muted">Connect a wallet to view its XLM balance.</p>}
+        )}
       </section>
 
-      {/* 4. Transaction Flow */}
+      {/* Buy */}
       <section className="card">
-        <h2>Send XLM (Testnet)</h2>
+        <h2>Buy credits</h2>
         {address ? (
           <div className="form">
-            <label>Destination public key
-              <input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="G…" />
+            <label>Listing ID
+              <input value={listingId} onChange={(e) => setListingId(e.target.value)} type="number" min="1" />
             </label>
-            <label>Amount (XLM)
-              <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.1" />
+            <label>Amount
+              <input value={buyAmount} onChange={(e) => setBuyAmount(e.target.value)} type="number" min="1" />
             </label>
-            <button className="primary" onClick={onSend}>Send XLM</button>
+            <button className="primary" onClick={onBuy}>Buy (pays USDC)</button>
           </div>
-        ) : <p className="muted">Connect a wallet to send XLM.</p>}
+        ) : <p className="muted">Connect a wallet to buy credits.</p>}
       </section>
 
-      {/* 4. Transaction feedback */}
+      {/* Retire */}
       <section className="card">
-        <h2>Feedback</h2>
-        {feedback.kind === "idle" && <p className="muted">No transaction yet.</p>}
+        <h2>Retire credits</h2>
+        {address ? (
+          <div className="form">
+            <label>Project ID
+              <input value={projectId} onChange={(e) => setProjectId(e.target.value)} type="number" min="1" />
+            </label>
+            <label>Amount
+              <input value={retireAmount} onChange={(e) => setRetireAmount(e.target.value)} type="number" min="1" />
+            </label>
+            <label>Reason
+              <input value={retireReason} onChange={(e) => setRetireReason(e.target.value)} />
+            </label>
+            <button className="primary" onClick={onRetire}>Retire (permanent)</button>
+          </div>
+        ) : <p className="muted">Connect a wallet to retire credits.</p>}
+      </section>
+
+      {/* Certificate viewer */}
+      <section className="card">
+        <h2>Retirement certificate</h2>
+        <div className="form">
+          <label>Certificate ID
+            <input value={lastCertId} onChange={(e) => setLastCertId(e.target.value)} type="number" min="1" placeholder="e.g. 1" />
+          </label>
+          <button onClick={onLoadCert}>View certificate</button>
+        </div>
+        {cert && (
+          <div style={{ marginTop: 12 }}>
+            <div className="row"><span>Retiree:</span><code>{cert.retiree}</code></div>
+            <div className="row"><span>Project:</span><span>#{cert.project_id.toString()}</span></div>
+            <div className="row"><span>Amount:</span><strong>{cert.amount.toString()}</strong></div>
+            <div className="row"><span>Reason:</span><span>{cert.reason}</span></div>
+            <div className="row"><span>Timestamp:</span><span>{cert.timestamp.toString()}</span></div>
+          </div>
+        )}
+      </section>
+
+      {/* Feedback */}
+      <section className="card">
+        <h2>Status</h2>
+        {feedback.kind === "idle" && <p className="muted">Ready.</p>}
         {feedback.kind === "pending" && <p className="info">{feedback.msg}</p>}
         {feedback.kind === "success" && (
-          <p className="ok">✅ Success{feedback.hash === "funded" ? "" : " — tx hash:"}{" "}
-            {feedback.hash !== "funded" && <a href={`https://stellar.expert/explorer/testnet/tx/${feedback.hash}`} target="_blank" rel="noreferrer"><code>{feedback.hash}</code></a>}
+          <p className="ok">
+            ✅ {feedback.msg}
+            {feedback.hash && (
+              <> — <a href={`https://stellar.expert/explorer/testnet/tx/${feedback.hash}`} target="_blank" rel="noreferrer"><code>{feedback.hash.slice(0, 10)}…</code></a></>
+            )}
           </p>
         )}
         {feedback.kind === "error" && <p className="err">❌ {feedback.msg}</p>}
-      </section>
-
-      {/* 5. Development standards / config */}
-      <section className="card meta">
-        <h2>Configuration</h2>
-        <ul>
-          <li>Network: {NETWORK_NAME}</li>
-          <li>Passphrase: <code>{NETWORK_PASSPHRASE}</code></li>
-          <li>Horizon: <code>{HORIZON_URL}</code></li>
-          <li>Wallet: Freighter (<code>@stellar/freighter-api</code>)</li>
-        </ul>
       </section>
     </div>
   );
