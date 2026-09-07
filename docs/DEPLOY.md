@@ -3,6 +3,15 @@
 This guide deploys the carbon registry contract to Stellar testnet and wires the
 frontend to it.
 
+> **TL;DR** — once you have the Stellar CLI and a funded identity, the whole
+> flow is one command:
+> ```bash
+> scripts/deploy.sh --usdc <USDC_CONTRACT_ID> --write-env
+> ```
+> That builds the wasm, deploys, initializes, and writes
+> `VITE_REGISTRY_CONTRACT_ID` into `frontend/.env`. The manual steps below
+> explain what it does.
+
 ## Prerequisites
 
 - Rust with the `wasm32v1-none` target: `rustup target add wasm32v1-none`
